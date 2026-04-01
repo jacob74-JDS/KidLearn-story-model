@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: kidlearn-story-model
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: MODEL_ID
+        value: JDS-74/kidlearn-story-model
+      - key: PORT
+        value: "3001"
