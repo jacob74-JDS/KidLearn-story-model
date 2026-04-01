@@ -16,4 +16,4 @@ RUN python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; Aut
 
 EXPOSE 3001
 
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:3001", "--timeout", "120", "--workers", "1"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:3001", "--timeout", "120", "--workers", "1", "--threads", "4"]
