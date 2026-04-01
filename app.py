@@ -1,6 +1,7 @@
-"""KidLearn Story Model API - async generation for Render free tier."""
+"""KidLearn Story Model API - optimized for Render free tier CPU."""
 import os
 import uuid
+import time
 import threading
 import torch
 from flask import Flask, request, jsonify
@@ -14,50 +15,73 @@ jobs = {}
 
 print(f"Loading model: {MODEL_ID}...", flush=True)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID)
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.float32)
 model.eval()
 print(f"Model ready! ({sum(p.numel() for p in model.parameters()):,} params)", flush=True)
 
 
 def run_generation(job_id, category, child_name, child_detail):
+    t0 = time.time()
     try:
-        prompt = f"<|begin|>\nCategory: {category}\nChild: {child_name}\n\nPage 1:"
+        prompt = f"Title: {child_name}'s {category.title()} Story\nPage 1:"
         inputs = tokenizer(prompt, return_tensors="pt")
+        print(f"[{job_id}] Starting generation ({len(inputs.input_ids[0])} input tokens)...", flush=True)
 
         with torch.no_grad():
             output = model.generate(
                 **inputs,
-                max_new_tokens=350,
-                temperature=0.8,
-                top_p=0.92,
-                top_k=50,
-                repetition_penalty=1.2,
+                max_new_tokens=180,
+                temperature=0.9,
+                top_k=40,
+                repetition_penalty=1.3,
                 do_sample=True,
-                pad_token_id=tokenizer.pad_token_id,
+                pad_token_id=tokenizer.eos_token_id,
             )
 
-        full_text = tokenizer.decode(output[0], skip_special_tokens=False)
-        clean = full_text.split("<|end|>")[0].replace("<|begin|>", "").strip()
+        elapsed = time.time() - t0
+        new_tokens = len(output[0]) - len(inputs.input_ids[0])
+        print(f"[{job_id}] Generated {new_tokens} tokens in {elapsed:.1f}s", flush=True)
 
-        result = {"title": "", "pages": [], "moral": "", "category": category, "childName": child_name}
-        for line in clean.split("\n"):
+        full_text = tokenizer.decode(output[0], skip_special_tokens=True)
+        pages = []
+        title = f"{child_name}'s {category.title()} Story"
+        moral = "Every day is a new adventure."
+
+        for line in full_text.split("\n"):
             line = line.strip()
+            if not line:
+                continue
             if line.startswith("Title:"):
-                result["title"] = line[6:].strip()
+                title = line[6:].strip() or title
             elif line.startswith("Page") and ":" in line:
                 page_text = line.split(":", 1)[1].strip()
-                if page_text:
-                    result["pages"].append(page_text)
+                if page_text and len(page_text) > 10:
+                    pages.append(page_text)
             elif line.startswith("Moral:"):
-                result["moral"] = line[6:].strip()
+                moral = line[6:].strip() or moral
 
-        if not result["title"]:
-            result["title"] = f"{child_name}'s {category.title()} Story"
-        if not result["moral"]:
-            result["moral"] = "Every day is a new adventure."
+        if len(pages) < 3:
+            sentences = full_text.replace("Title:", "").replace("Moral:", "")
+            sentences = [s.strip() + "." for s in sentences.split(".") if len(s.strip()) > 15]
+            pages = []
+            for i in range(0, len(sentences), 2):
+                chunk = " ".join(sentences[i:i+2])
+                if chunk.strip():
+                    pages.append(chunk)
+            pages = pages[:6] if pages else [f"{child_name} went on a great {category} one sunny day."]
+
+        result = {
+            "title": title,
+            "pages": pages[:6],
+            "moral": moral,
+            "category": category,
+            "childName": child_name,
+        }
 
         jobs[job_id] = {"status": "done", "story": result}
+        print(f"[{job_id}] Done: {len(result['pages'])} pages, {elapsed:.1f}s total", flush=True)
     except Exception as e:
+        print(f"[{job_id}] Error: {e}", flush=True)
         jobs[job_id] = {"status": "error", "error": str(e)}
 
 
